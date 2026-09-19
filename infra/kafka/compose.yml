@@ -1,0 +1,216 @@
+# infra/kafka/compose.yml
+# Representa la instancia "ec2-kafka" del Caso VidaSalud (punto 7): Zookeeper
+# (3 nodos) + Kafka (3 brokers) + Kafka UI, con los 2 topicos del punto 9 ya
+# creados con sus particiones/replicas/retencion.
+#
+# Uso local:
+#   1) (Una sola vez, si tambien corres infra/apps y/o infra/mq en la misma
+#      maquina): docker network create vidasalud-net
+#   2) Desde esta carpeta: docker compose up -d
+#   3) Kafka UI:           http://localhost:9000
+#   4) El contenedor "topic-init" crea los topicos y termina (exit 0); es
+#      normal verlo como "Exited (0)" en `docker compose ps`.
+#
+# Despliegue real (ec2-kafka como instancia EC2 propia): quita el
+# "external: true" de la red, saca los "ports:" que solo sirven para debug
+# local (9092/9093/9094, 2181) y deja abierto en el Security Group solo el
+# puerto 9092 (o el que uses de verdad) hacia las IP privadas de ec2-apps
+# (ver Caso VidaSalud, punto 7).
+
+networks:
+  vidasalud-net:
+    name: vidasalud-net
+    external: true
+
+volumes:
+  zk1-data:
+  zk1-log:
+  zk2-data:
+  zk2-log:
+  zk3-data:
+  zk3-log:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:
+
+services:
+
+  zookeeper1:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: vidasalud-zookeeper1
+    environment:
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_SERVERS: "zookeeper1:2888:3888;zookeeper2:2888:3888;zookeeper3:2888:3888"
+    volumes:
+      - zk1-data:/var/lib/zookeeper/data
+      - zk1-log:/var/lib/zookeeper/log
+    networks:
+      - vidasalud-net
+
+  zookeeper2:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: vidasalud-zookeeper2
+    environment:
+      ZOOKEEPER_SERVER_ID: 2
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_SERVERS: "zookeeper1:2888:3888;zookeeper2:2888:3888;zookeeper3:2888:3888"
+    volumes:
+      - zk2-data:/var/lib/zookeeper/data
+      - zk2-log:/var/lib/zookeeper/log
+    networks:
+      - vidasalud-net
+
+  zookeeper3:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: vidasalud-zookeeper3
+    environment:
+      ZOOKEEPER_SERVER_ID: 3
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_SERVERS: "zookeeper1:2888:3888;zookeeper2:2888:3888;zookeeper3:2888:3888"
+    volumes:
+      - zk3-data:/var/lib/zookeeper/data
+      - zk3-log:/var/lib/zookeeper/log
+    networks:
+      - vidasalud-net
+
+  kafka1:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: vidasalud-kafka1
+    depends_on:
+      - zookeeper1
+      - zookeeper2
+      - zookeeper3
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper1:2181,zookeeper2:2181,zookeeper3:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Listener interno (29092): lo usan los microservicios, dentro de la red docker.
+      # Listener host (9092): solo para conectarte con un cliente Kafka desde tu maquina.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false" # los topicos los crea a proposito "topic-init"
+    volumes:
+      - kafka1-data:/var/lib/kafka/data
+    ports:
+      - "9092:9092"
+    networks:
+      - vidasalud-net
+
+  kafka2:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: vidasalud-kafka2
+    depends_on:
+      - zookeeper1
+      - zookeeper2
+      - zookeeper3
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper1:2181,zookeeper2:2181,zookeeper3:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:29092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka2-data:/var/lib/kafka/data
+    ports:
+      - "9093:9093"
+    networks:
+      - vidasalud-net
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: vidasalud-kafka3
+    depends_on:
+      - zookeeper1
+      - zookeeper2
+      - zookeeper3
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper1:2181,zookeeper2:2181,zookeeper3:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:29092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka3-data:/var/lib/kafka/data
+    ports:
+      - "9094:9094"
+    networks:
+      - vidasalud-net
+
+  # Crea los 2 topicos del Caso VidaSalud (punto 9) con sus particiones,
+  # replicas y politica de retencion, y termina (no es un servicio de larga
+  # duracion). KAFKA_AUTO_CREATE_TOPICS_ENABLE=false en los brokers es
+  # justamente para que NINGUN topico se cree "por accidente" con la
+  # configuracion por defecto (1 particion, sin retencion pensada) la
+  # primera vez que alguien le publica.
+  topic-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: vidasalud-kafka-topic-init
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Esperando a que los 3 brokers esten listos..."
+        cub kafka-ready -b kafka1:29092,kafka2:29092,kafka3:29092 3 60 -c /etc/confluent/docker/kafka.properties || true
+
+        echo "Creando appointments.events (3 particiones, 3 replicas, delete, retencion 7 dias)..."
+        kafka-topics --bootstrap-server kafka1:29092 --create --if-not-exists \
+          --topic appointments.events --partitions 3 --replication-factor 3 \
+          --config cleanup.policy=delete \
+          --config retention.ms=604800000
+
+        echo "Creando audit.timeline (3 particiones, 3 replicas, compact+delete, retencion 30 dias)..."
+        kafka-topics --bootstrap-server kafka1:29092 --create --if-not-exists \
+          --topic audit.timeline --partitions 3 --replication-factor 3 \
+          --config cleanup.policy=compact,delete \
+          --config retention.ms=2592000000
+
+        echo "Topicos creados:"
+        kafka-topics --bootstrap-server kafka1:29092 --list
+    networks:
+      - vidasalud-net
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: vidasalud-kafka-ui
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    environment:
+      KAFKA_CLUSTERS_0_NAME: vidasalud
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:29092,kafka2:29092,kafka3:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper1:2181,zookeeper2:2181,zookeeper3:2181
+    ports:
+      - "9000:8080"
+    networks:
+      - vidasalud-net

@@ -1,0 +1,67 @@
+# infra/mq/compose.yml
+# Representa la instancia "ec2-mq" del Caso VidaSalud (punto 7): un cluster
+# RabbitMQ de 2 nodos con Management UI (punto 8: topologia de colas/DLQ).
+#
+# Uso local:
+#   1) (Una sola vez, si tambien corres infra/apps y/o infra/kafka en la
+#      misma maquina): docker network create vidasalud-net
+#   2) cp .env.example .env   y cambia el ERLANG cookie/clave por una propia
+#   3) Desde esta carpeta:    docker compose up -d
+#   4) Management UI:         http://localhost:15672  (usuario/clave: ver definitions.json,
+#      por defecto vidasalud/vidasalud)
+#
+# Despliegue real (ec2-mq como instancia EC2 propia): quita el "external: true"
+# de la red y expone 5672 (AMQP) solo a las IP privadas de ec2-apps via
+# Security Group (ver Caso VidaSalud, punto 7), y 15672 solo a tu IP/VPN para
+# administrar.
+
+networks:
+  vidasalud-net:
+    name: vidasalud-net
+    external: true
+
+volumes:
+  rabbitmq1-data:
+  rabbitmq2-data:
+
+services:
+
+  rabbitmq1:
+    image: rabbitmq:4-management
+    container_name: vidasalud-rabbitmq1
+    hostname: rabbitmq1
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:-vidasalud-cluster-cookie-change-me}
+    volumes:
+      - rabbitmq1-data:/var/lib/rabbitmq
+      - ./definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq.conf:/etc/rabbitmq/conf.d/10-vidasalud.conf:ro
+    ports:
+      - "5672:5672"   # AMQP (el que usan appointments/notify)
+      - "15672:15672" # Management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    networks:
+      - vidasalud-net
+
+  rabbitmq2:
+    image: rabbitmq:4-management
+    container_name: vidasalud-rabbitmq2
+    hostname: rabbitmq2
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:-vidasalud-cluster-cookie-change-me}
+    volumes:
+      - rabbitmq2-data:/var/lib/rabbitmq
+      - ./cluster-entrypoint.sh:/usr/local/bin/cluster-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/cluster-entrypoint.sh"]
+    ports:
+      - "15673:15672" # Management UI del segundo nodo (para verificar el cluster)
+    depends_on:
+      rabbitmq1:
+        condition: service_healthy
+    networks:
+      - vidasalud-net

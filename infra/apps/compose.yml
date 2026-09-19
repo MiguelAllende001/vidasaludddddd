@@ -1,0 +1,180 @@
+# infra/apps/compose.yml
+# Representa la instancia "ec2-apps" del Caso VidaSalud (punto 7): SOLO los 6
+# microservicios Spring Boot (appointments-svc, catalog-svc, notify-svc,
+# report-svc, audit-svc + el bff). El caso es explicito en que el despliegue
+# es en AWS EC2, y la lista de "ec2-apps" no incluye una base de datos: Oracle
+# esta pensado como una instancia RDS aparte (administrada por AWS), no como
+# un contenedor mas de este compose.
+#
+# Por eso, por defecto este archivo NO levanta ninguna base de datos: los
+# microservicios se conectan a donde le digas via DB_HOST/DB_PORT/DB_SERVICE
+# (tipico: el endpoint de tu instancia RDS Oracle). Antes de levantar esto en
+# AWS de verdad, corre una vez ./init-db/01-create-users.sql contra tu RDS
+# (con SQL Developer, sqlplus, o el "Query Editor" de RDS) para crear los 4
+# schemas.
+#
+# ---- Uso local CONTRA UN RDS REAL (recomendado, mas fiel al caso) --------
+#   1) docker network create vidasalud-net   (una sola vez)
+#   2) export DB_HOST=tu-endpoint.rds.amazonaws.com DB_PASSWORD=tu-clave
+#   3) docker compose up -d --build
+#
+# ---- Uso local SIN RDS, para probar rapido en tu laptop -------------------
+#   Este compose incluye ademas un servicio "oracle-db" (contenedor Oracle XE)
+#   detras del profile "local-db", apagado por defecto para no contradecir el
+#   punto anterior. Para usarlo:
+#   1) docker network create vidasalud-net   (una sola vez)
+#   2) docker compose --profile local-db up -d oracle-db
+#      -> espera a que quede "healthy" (docker compose ps)
+#   3) docker compose --profile local-db up -d --build
+#      (con DB_HOST/DB_USER/etc. en sus valores por defecto, que apuntan a
+#      este mismo contenedor "oracle-db")
+#
+# El unico puerto publicado al host es el del BFF (8080), el unico servicio
+# pensado para quedar detras del API Gateway. El resto (appointments,
+# catalog, notify, audit, report) solo es alcanzable dentro de la red docker
+# "vidasalud-net" (ver Caso VidaSalud, punto 7: "Security Groups: abrir solo
+# los puertos necesarios"). Si ec2-mq/ec2-kafka son instancias EC2 reales
+# separadas, reemplaza RABBITMQ_HOST/KAFKA_BOOTSTRAP_SERVERS por sus IP
+# privadas o DNS interno en vez del nombre del contenedor.
+
+networks:
+  vidasalud-net:
+    name: vidasalud-net
+    external: true
+
+volumes:
+  oracle-data:
+
+services:
+
+  # Contenedor Oracle SOLO para pruebas locales rapidas (ver instrucciones
+  # arriba). No es parte de "ec2-apps" en un despliegue real: ahi va RDS.
+  oracle-db:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: vidasalud-oracle-db
+    profiles: ["local-db"]
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SYSTEM_PASSWORD:-changeme}
+      ORACLE_DATABASE: XEPDB1
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./init-db:/container-entrypoint-initdb.d
+    ports:
+      - "1521:1521" # solo para debug local (conectarse con un cliente SQL); no exponer en el SG real de EC2.
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks:
+      - vidasalud-net
+
+  bff:
+    build:
+      context: ../../bff
+    container_name: vidasalud-bff
+    environment:
+      APPOINTMENTS_SERVICE_URL: http://appointments:8081
+      CATALOG_SERVICE_URL: http://catalog:8082
+      AUDIT_SERVICE_URL: http://audit:8084
+      REPORT_SERVICE_URL: http://report:8085
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-b19dac1c-44c9-4e15-9214-59ae9f63b92e}
+      AZURE_API_CLIENT_ID: ${AZURE_API_CLIENT_ID:-6a867a28-0b42-4528-ab92-b7824aa877b3}
+    ports:
+      - "8080:8080" # unico servicio pensado para quedar detras del API Gateway.
+    depends_on:
+      - appointments
+      - catalog
+      - audit
+      - report
+    networks:
+      - vidasalud-net
+
+  appointments:
+    build:
+      context: ../../appointments
+    container_name: vidasalud-appointments
+    environment:
+      SPRING_PROFILES_ACTIVE: oracle
+      # DB_HOST por defecto apunta al contenedor local (profile "local-db").
+      # Para un RDS real: exporta DB_HOST (y DB_PASSWORD si corresponde)
+      # antes de levantar el compose, ver instrucciones arriba.
+      DB_HOST: ${DB_HOST:-oracle-db}
+      DB_PORT: ${DB_PORT:-1521}
+      DB_SERVICE: ${DB_SERVICE:-XEPDB1}
+      DB_USER: ${DB_USER_APPOINTMENTS:-vidasalud_appointments}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq1}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-vidasalud}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-vidasalud}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka1:29092,kafka2:29092,kafka3:29092}
+    expose:
+      - "8081"
+    networks:
+      - vidasalud-net
+
+  catalog:
+    build:
+      context: ../../catalog
+    container_name: vidasalud-catalog
+    environment:
+      SPRING_PROFILES_ACTIVE: oracle
+      DB_HOST: ${DB_HOST:-oracle-db}
+      DB_PORT: ${DB_PORT:-1521}
+      DB_SERVICE: ${DB_SERVICE:-XEPDB1}
+      DB_USER: ${DB_USER_CATALOG:-vidasalud_catalog}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+    expose:
+      - "8082"
+    networks:
+      - vidasalud-net
+
+  notify:
+    build:
+      context: ../../notify
+    container_name: vidasalud-notify
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq1}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-vidasalud}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-vidasalud}
+    expose:
+      - "8083" # no publico: solo consume RabbitMQ, no recibe llamadas HTTP de nadie.
+    networks:
+      - vidasalud-net
+
+  audit:
+    build:
+      context: ../../audit
+    container_name: vidasalud-audit
+    environment:
+      SPRING_PROFILES_ACTIVE: oracle
+      DB_HOST: ${DB_HOST:-oracle-db}
+      DB_PORT: ${DB_PORT:-1521}
+      DB_SERVICE: ${DB_SERVICE:-XEPDB1}
+      DB_USER: ${DB_USER_AUDIT:-vidasalud_audit}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka1:29092,kafka2:29092,kafka3:29092}
+    expose:
+      - "8084"
+    networks:
+      - vidasalud-net
+
+  report:
+    build:
+      context: ../../report
+    container_name: vidasalud-report
+    environment:
+      SPRING_PROFILES_ACTIVE: oracle
+      DB_HOST: ${DB_HOST:-oracle-db}
+      DB_PORT: ${DB_PORT:-1521}
+      DB_SERVICE: ${DB_SERVICE:-XEPDB1}
+      DB_USER: ${DB_USER_REPORT:-vidasalud_report}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka1:29092,kafka2:29092,kafka3:29092}
+    expose:
+      - "8085"
+    networks:
+      - vidasalud-net
