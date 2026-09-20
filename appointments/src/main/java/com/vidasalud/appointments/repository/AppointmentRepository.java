@@ -1,7 +1,7 @@
 package com.vidasalud.appointments.repository;
 
 import com.vidasalud.appointments.model.Appointment;
-import com.vidasalud.appointments.model.AppointmentStatus;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 

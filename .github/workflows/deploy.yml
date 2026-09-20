@@ -1,0 +1,70 @@
+name: CI/CD Pipeline - VidaSalud Infra & Apps
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  terraform-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # 1. Configurar credenciales de AWS (Learner Lab)
+      - name: Configurar AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      # 2. Configurar Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # 3. Provisionar infraestructura (VPC, 2 EC2, API Gateway)
+      - name: Terraform Init & Apply
+        id: terraform
+        run: |
+          cd infra/terraform
+          terraform init
+          terraform apply -auto-approve \
+            -var="public_key=${{ secrets.EC2_SSH_PUBLIC_KEY }}" \
+            -var="azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -var="azure_client_id=${{ secrets.AZURE_CLIENT_ID }}"
+          
+          echo "ec2_apps_ip=$(terraform output -raw ec2_apps_public_ip)" >> $GITHUB_OUTPUT
+          echo "ec2_db_ip=$(terraform output -raw ec2_db_private_ip)" >> $GITHUB_OUTPUT
+
+      # 4. Desplegar aplicaciones vía SSH en la EC2 de aplicaciones
+      - name: Desplegar Docker Compose en EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ steps.terraform.outputs.ec2_apps_ip }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            sudo apt-get update -y
+            
+            # Clonar o actualizar repositorio
+            if [ ! -d "vidasalud" ]; then
+              git clone https://github.com/${{ github.repository }}.git vidasalud
+            fi
+            cd vidasalud
+            git fetch --all
+            git reset --hard origin/main
+            
+            # Generar archivo .env con las variables de conexión a la EC2 de la BD
+            cat <<EOT > infra/.env
+            DB_URL=jdbc:postgresql://${{ steps.terraform.outputs.ec2_db_ip }}:5432/vidasalud_db
+            DB_USER=${{ secrets.DB_USER }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            EOT
+
+            # Levantar toda la pila de contenedores
+            cd infra
+            sudo docker compose down --remove-orphans || true
+            sudo docker compose up -d --build

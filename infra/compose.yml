@@ -1,0 +1,11 @@
+name: vidasalud-stack
+
+include:
+  - mq/compose.yml
+  - kafka/compose.yml
+  # - apps/compose.yml   # Descomenta si creas esta carpeta para las apps
+
+networks:
+  vidasalud-net:
+    name: vidasalud-net
+    driver: bridge
