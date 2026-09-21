@@ -1,4 +1,9 @@
-output "api_gateway_url" {
-  value       = aws_apigatewayv2_api.vidasalud_api.api_endpoint
-  description = "URL publica del API Gateway"
+output "ec2_apps_public_ip" {
+  value       = aws_instance.vidasalud_server.public_ip
+  description = "IP publica del servidor de aplicaciones"
+}
+
+output "ec2_db_public_ip" {
+  value       = aws_instance.vidasalud_db_server.public_ip
+  description = "IP publica del servidor de base de datos"
 }

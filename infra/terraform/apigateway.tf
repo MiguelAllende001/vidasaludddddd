@@ -1,11 +1,10 @@
-
 # AWS API GATEWAY (HTTP API)
 
 resource "aws_apigatewayv2_api" "vidasalud_api" {
   name          = "vidasalud-http-api"
   protocol_type = "HTTP"
 
- cors_configuration {
+  cors_configuration {
     allow_origins = [
       "http://localhost:3000",
       "http://localhost:5173",
@@ -15,7 +14,8 @@ resource "aws_apigatewayv2_api" "vidasalud_api" {
     allow_headers = ["Authorization", "Content-Type"]
     max_age       = 300
   }
-  
+}
+
 # Authorizer JWT con Azure AD (IDaaS)
 resource "aws_apigatewayv2_authorizer" "azure_ad_auth" {
   api_id           = aws_apigatewayv2_api.vidasalud_api.id

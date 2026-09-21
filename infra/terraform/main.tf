@@ -12,7 +12,9 @@ provider "aws" {
   region = var.aws_region
 }
 
-
+# -----------------------------------------------
+# Red / VPC
+# -----------------------------------------------
 resource "aws_vpc" "vidasalud_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -22,7 +24,6 @@ resource "aws_vpc" "vidasalud_vpc" {
     Name = "vidasalud-vpc"
   }
 }
-
 
 resource "aws_subnet" "vidasalud_public_subnet" {
   vpc_id                  = aws_vpc.vidasalud_vpc.id
@@ -35,7 +36,6 @@ resource "aws_subnet" "vidasalud_public_subnet" {
   }
 }
 
-
 resource "aws_internet_gateway" "vidasalud_igw" {
   vpc_id = aws_vpc.vidasalud_vpc.id
 
@@ -43,7 +43,6 @@ resource "aws_internet_gateway" "vidasalud_igw" {
     Name = "vidasalud-igw"
   }
 }
-
 
 resource "aws_route_table" "vidasalud_public_rt" {
   vpc_id = aws_vpc.vidasalud_vpc.id
@@ -58,19 +57,20 @@ resource "aws_route_table" "vidasalud_public_rt" {
   }
 }
 
-
 resource "aws_route_table_association" "vidasalud_rta" {
   subnet_id      = aws_subnet.vidasalud_public_subnet.id
   route_table_id = aws_route_table.vidasalud_public_rt.id
 }
 
-
+# -----------------------------------------------
+# Grupo de Seguridad
+# -----------------------------------------------
 resource "aws_security_group" "vidasalud_sg" {
   name        = "vidasalud-security-group"
   description = "Security group para Apps, Mensajeria y Base de Datos"
   vpc_id      = aws_vpc.vidasalud_vpc.id
 
-
+  # SSH
   ingress {
     from_port   = 22
     to_port     = 22
@@ -78,7 +78,7 @@ resource "aws_security_group" "vidasalud_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-
+  # Apps Backend / Spring Boot
   ingress {
     from_port   = 8080
     to_port     = 8080
@@ -86,23 +86,6 @@ resource "aws_security_group" "vidasalud_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
- 
-  ingress {
-    from_port   = 4200
-    to_port     = 4200
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-
-  ingress {
-    from_port   = 15672
-    to_port     = 15672
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
- 
   ingress {
     from_port   = 8081
     to_port     = 8081
@@ -110,15 +93,45 @@ resource "aws_security_group" "vidasalud_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Frontend Angular / React
+  ingress {
+    from_port   = 4200
+    to_port     = 4200
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # RabbitMQ Management
+  ingress {
+    from_port   = 15672
+    to_port     = 15672
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Oracle DB
+  ingress {
     from_port   = 1521
+    to_port     = 1521
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # PostgreSQL DB
+  ingress {
+    from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
- 
   egress {
     from_port   = 0
     to_port     = 0
@@ -131,20 +144,17 @@ resource "aws_security_group" "vidasalud_sg" {
   }
 }
 
-# React Frontend
-  ingress {
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
+# -----------------------------------------------
+# Clave SSH para Instancias
+# -----------------------------------------------
 resource "aws_key_pair" "deployer" {
   key_name   = "vidasalud-key"
-  public_key = var.public_key
+  public_key = file("~/.ssh/id_rsa.pub")
 }
 
-
+# -----------------------------------------------
+# Imagen de Ubuntu
+# -----------------------------------------------
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
@@ -155,7 +165,9 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-
+# -----------------------------------------------
+# Servidores EC2
+# -----------------------------------------------
 resource "aws_instance" "vidasalud_server" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.large"
@@ -168,7 +180,7 @@ resource "aws_instance" "vidasalud_server" {
   }
 
   user_data = <<-EOF
-            
+              #!/bin/bash
               apt-get update -y
               apt-get install -y ca-certificates curl gnupg lsb-release git
               mkdir -p /etc/apt/keyrings
@@ -185,7 +197,6 @@ resource "aws_instance" "vidasalud_server" {
     Name = "vidasalud-ec2-apps"
   }
 }
-
 
 resource "aws_instance" "vidasalud_db_server" {
   ami                    = data.aws_ami.ubuntu.id
