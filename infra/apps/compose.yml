@@ -87,14 +87,14 @@ services:
       - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD:-vidasalud_pass}
     networks:
       - vidasalud-net
-      
-frontend-svc:
+
+  frontend-svc:
     build:
-      context: ../../frontend-vidasalud  # Ruta a la carpeta de tu app React
+      context: ../../Frontend
       dockerfile: Dockerfile
     container_name: vidasalud-frontend
     ports:
-      - "3000:80"  # Expone React en el puerto 3000 (o 80:80 si prefieres directo)
+      - "3000:80"
     networks:
       - vidasalud-net
     depends_on:
